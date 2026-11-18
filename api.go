@@ -54,9 +54,10 @@ func NewRouter(mgr *Manager, cfg Config) http.Handler {
 	})
 
 	mux.HandleFunc("GET /instances", a.auth(a.listInstances))
-	mux.HandleFunc("POST /instances", a.auth(a.createInstance))
+	mux.HandleFunc("POST /instances", a.adminOnly(a.createInstance))
+	mux.HandleFunc("POST /instances/{name}/token", a.adminOnly(a.withInstance(a.rotateToken)))
 	mux.HandleFunc("GET /instances/{name}", a.auth(a.withInstance(a.getStatus)))
-	mux.HandleFunc("DELETE /instances/{name}", a.auth(a.deleteInstance))
+	mux.HandleFunc("DELETE /instances/{name}", a.adminOnly(a.deleteInstance))
 	mux.HandleFunc("POST /instances/{name}/connect", a.auth(a.withInstance(a.connect)))
 	mux.HandleFunc("GET /instances/{name}/qr", a.auth(a.withInstance(a.getQR)))
 	mux.HandleFunc("POST /instances/{name}/paircode", a.auth(a.withInstance(a.pairCode)))
@@ -107,12 +108,41 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 		if tok == "" { // permite abrir o QR no navegador: /instances/x/qr?format=png&token=...
 			tok = r.URL.Query().Get("token")
 		}
-		if subtle.ConstantTimeCompare([]byte(tok), []byte(a.cfg.APIToken)) != 1 {
-			writeErr(w, http.StatusUnauthorized, errors.New("token inválido"))
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(a.cfg.APIToken)) == 1 {
+			next(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, caller{admin: true})))
+			return
+		}
+		if inst := a.mgr.ByToken(tok); inst != nil {
+			next(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, caller{inst: inst})))
+			return
+		}
+		writeErr(w, http.StatusUnauthorized, errors.New("token inválido"))
+	}
+}
+
+// caller diz quem está chamando: o token principal (admin) ou a chave de uma instância.
+type caller struct {
+	admin bool
+	inst  *Instance
+}
+type callerKey struct{}
+
+func callerOf(r *http.Request) caller {
+	c, _ := r.Context().Value(callerKey{}).(caller)
+	return c
+}
+
+var errOnlyAdmin = errors.New("esta ação precisa do token principal (a chave da instância só controla a própria instância)")
+var errOtherInstance = errors.New("esta chave é de outra instância")
+
+func (a *API) adminOnly(next http.HandlerFunc) http.HandlerFunc {
+	return a.auth(func(w http.ResponseWriter, r *http.Request) {
+		if !callerOf(r).admin {
+			writeErr(w, http.StatusForbidden, errOnlyAdmin)
 			return
 		}
 		next(w, r)
-	}
+	})
 }
 
 // isLocalRequest: conexão vindo do próprio PC, com Host localhost/127.0.0.1
@@ -150,6 +180,10 @@ func (a *API) withInstance(next instHandler) http.HandlerFunc {
 		inst, err := a.mgr.Get(r.PathValue("name"))
 		if err != nil {
 			writeErr(w, http.StatusNotFound, err)
+			return
+		}
+		if c := callerOf(r); !c.admin && c.inst != inst {
+			writeErr(w, http.StatusForbidden, errOtherInstance)
 			return
 		}
 		next(w, r, inst)
@@ -222,7 +256,20 @@ func contextInfo(quotedID string, mentions []string) *waE2E.ContextInfo {
 // ---------- instâncias ----------
 
 func (a *API) listInstances(w http.ResponseWriter, r *http.Request) {
+	if c := callerOf(r); !c.admin {
+		writeJSON(w, 200, []InstanceStatus{c.inst.Status()})
+		return
+	}
 	writeJSON(w, 200, a.mgr.List())
+}
+
+func (a *API) rotateToken(w http.ResponseWriter, r *http.Request, inst *Instance) {
+	tok, err := inst.RotateToken(r.Context())
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"name": inst.Name, "token": tok})
 }
 
 func (a *API) createInstance(w http.ResponseWriter, r *http.Request) {

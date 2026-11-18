@@ -21,12 +21,12 @@ func (a *API) registerEvolution(mux *http.ServeMux) {
 	for _, p := range []string{"", "/v1"} {
 		mux.HandleFunc("POST "+p+"/message/sendText/{name}", a.auth(a.evoInstance(a.evoSendText)))
 		mux.HandleFunc("POST "+p+"/message/sendMedia/{name}", a.auth(a.evoInstance(a.evoSendMedia)))
-		mux.HandleFunc("POST "+p+"/instance/create", a.auth(a.evoCreate))
+		mux.HandleFunc("POST "+p+"/instance/create", a.adminOnly(a.evoCreate))
 		mux.HandleFunc("GET "+p+"/instance/fetchInstances", a.auth(a.evoFetch))
 		mux.HandleFunc("GET "+p+"/instance/connect/{name}", a.auth(a.evoInstance(a.evoConnect)))
 		mux.HandleFunc("GET "+p+"/instance/connectionState/{name}", a.auth(a.evoInstance(a.evoState)))
 		mux.HandleFunc("DELETE "+p+"/instance/logout/{name}", a.auth(a.evoInstance(a.evoLogout)))
-		mux.HandleFunc("DELETE "+p+"/instance/delete/{name}", a.auth(a.evoDelete))
+		mux.HandleFunc("DELETE "+p+"/instance/delete/{name}", a.adminOnly(a.evoDelete))
 		mux.HandleFunc("POST "+p+"/webhook/set/{name}", a.auth(a.evoInstance(a.evoWebhook)))
 	}
 }
@@ -43,6 +43,17 @@ func (a *API) evoInstance(next instHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		inst, err := a.mgr.Get(name)
+		if c := callerOf(r); !c.admin {
+			// Chave de instância: sempre age na própria instância.
+			if err == nil && inst != c.inst {
+				evoErr(w, http.StatusForbidden, errOtherInstance.Error())
+				return
+			}
+			if err != nil {
+				log.Printf("[evolution] %s %s: instância %q não existe, usando a da chave (%q)", r.Method, r.URL.Path, name, c.inst.Name)
+			}
+			inst, err = c.inst, nil
+		}
 		if err != nil {
 			// Nome desconhecido (ex.: instância antiga da WaDuck salva no site):
 			// usa FALLBACK_INSTANCE ou, se só houver uma instância conectada, ela.
@@ -192,7 +203,7 @@ func (a *API) evoCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"instance": map[string]any{"instanceName": inst.Name, "instanceId": inst.Name, "status": "created"},
-		"hash":     map[string]any{"apikey": a.cfg.APIToken},
+		"hash":     map[string]any{"apikey": inst.Token()},
 	}
 	if body.Qrcode {
 		if err := inst.Connect(); err == nil {
@@ -246,11 +257,14 @@ func (a *API) evoState(w http.ResponseWriter, r *http.Request, inst *Instance) {
 
 func (a *API) evoFetch(w http.ResponseWriter, r *http.Request) {
 	list := a.mgr.List()
+	if c := callerOf(r); !c.admin {
+		list = []InstanceStatus{c.inst.Status()}
+	}
 	out := make([]map[string]any, 0, len(list))
 	for _, st := range list {
 		out = append(out, map[string]any{
 			"name": st.Name, "id": st.Name, "connectionStatus": evoStateName(st),
-			"ownerJid": st.JID, "profileName": st.PushName, "number": st.Phone,
+			"ownerJid": st.JID, "profileName": st.PushName, "number": st.Phone, "token": st.Token,
 			"instance": map[string]any{"instanceName": st.Name, "status": evoStateName(st), "owner": st.JID, "profileName": st.PushName},
 		})
 	}

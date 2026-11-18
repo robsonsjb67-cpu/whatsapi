@@ -50,6 +50,15 @@ Mande o token em qualquer um destes:
 - cabeçalho `Authorization: Bearer SEU_TOKEN`
 - query `?token=SEU_TOKEN` (útil para abrir o QR no navegador)
 
+## Chaves: principal e por instância
+
+- **Token principal** (`API_TOKEN` do `.env`): controla tudo. Cria e apaga instâncias, vê todas.
+- **Chave da instância** (`inst_...`): gerada automaticamente quando a instância é criada. Ela aparece no painel,
+  no campo `token` de `GET /instances/{nome}` e em `hash.apikey` do `/v1/instance/create`.
+  Só funciona na própria instância: enviar, ver QR, status, webhook, disparo.
+  Com ela, nas rotas no formato Evolution, o nome da instância na URL nem importa: a API usa a instância dona da chave.
+- Trocar a chave: botão **Trocar** no painel ou `POST /instances/{nome}/token` com o token principal.
+
 ## Conectando um número pela API
 
 > No Windows, use o painel ou o `curl.exe` pelo PowerShell/Git Bash. Os exemplos abaixo são no formato bash.

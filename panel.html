@@ -180,6 +180,10 @@ async function act(name, what) {
     if (what === 'connect') await api('POST', `/instances/${name}/connect`);
     if (what === 'logout') await api('POST', `/instances/${name}/logout`);
     if (what === 'delete') { if (!confirm('Apagar a instância ' + name + '?')) return; await api('DELETE', `/instances/${name}`); }
+    if (what === 'token') {
+      if (!confirm('Gerar uma chave nova para ' + name + '? A chave antiga para de funcionar na hora.')) return;
+      await api('POST', `/instances/${name}/token`);
+    }
     if (what === 'webhook') {
       const url = prompt('URL do webhook (vazio desliga):', '');
       if (url === null) return;
@@ -187,6 +191,9 @@ async function act(name, what) {
     }
     refresh();
   } catch (e) { msg(e.message); }
+}
+async function copyKey(k) {
+  try { await navigator.clipboard.writeText(k); msg('Chave copiada.'); } catch (e) { prompt('Copie a chave:', k); }
 }
 async function sendText() {
   try {
@@ -225,6 +232,9 @@ async function refresh() {
         <strong>${esc(i.name)}</strong> <span class="badge ${esc(i.status)}">${esc(i.status)}</span>
         <div class="muted">${i.phone ? 'Número: ' + esc(i.phone) + (i.pushName ? ' (' + esc(i.pushName) + ')' : '') : 'Sem número conectado'}</div>
         <div class="muted">Webhook: ${esc(i.webhook) || 'nenhum'}</div>
+        <div class="muted">Chave desta instância: <code>${esc(i.token)}</code>
+          <button class="sec" style="padding:2px 8px;font-size:12px" onclick="copyKey('${esc(i.token)}')">Copiar</button>
+          <button class="sec" style="padding:2px 8px;font-size:12px" onclick="act('${esc(i.name)}','token')">Trocar</button></div>
         ${i.lastError ? `<div class="muted" style="color:var(--danger)">${esc(i.lastError)}</div>` : ''}
         <div class="row" style="margin-top:10px">
           ${i.loggedIn ? `<button class="sec" onclick="act('${esc(i.name)}','logout')">Desconectar número</button>`

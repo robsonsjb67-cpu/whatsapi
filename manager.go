@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -36,6 +39,7 @@ type Instance struct {
 	client   *whatsmeow.Client
 	qr       string
 	qrAt     time.Time
+	token    string
 	pairing  bool
 	lastErr  string
 	campaign *Campaign
@@ -50,6 +54,7 @@ type InstanceStatus struct {
 	Phone     string `json:"phone,omitempty"`
 	PushName  string `json:"pushName,omitempty"`
 	Webhook   string `json:"webhook,omitempty"`
+	Token     string `json:"token"`
 	LastError string `json:"lastError,omitempty"`
 }
 
@@ -89,6 +94,8 @@ func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 	)`); err != nil {
 		return nil, fmt.Errorf("migração api_instances: %w", err)
 	}
+	// Coluna nova (versões antigas não têm): ignora o erro se já existir.
+	_, _ = db.ExecContext(ctx, `ALTER TABLE api_instances ADD COLUMN token TEXT NOT NULL DEFAULT ''`)
 
 	m := &Manager{
 		cfg:       cfg,
@@ -105,16 +112,16 @@ func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 }
 
 func (m *Manager) loadAll(ctx context.Context) error {
-	rows, err := m.db.QueryContext(ctx, `SELECT name, jid, webhook FROM api_instances ORDER BY created_at`)
+	rows, err := m.db.QueryContext(ctx, `SELECT name, jid, webhook, token FROM api_instances ORDER BY created_at`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	type row struct{ name, jid, webhook string }
+	type row struct{ name, jid, webhook, token string }
 	var list []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.name, &r.jid, &r.webhook); err != nil {
+		if err := rows.Scan(&r.name, &r.jid, &r.webhook, &r.token); err != nil {
 			return err
 		}
 		list = append(list, r)
@@ -123,7 +130,11 @@ func (m *Manager) loadAll(ctx context.Context) error {
 		return err
 	}
 	for _, r := range list {
-		inst := &Instance{Name: r.name, mgr: m, webhook: r.webhook}
+		inst := &Instance{Name: r.name, mgr: m, webhook: r.webhook, token: r.token}
+		if inst.token == "" { // instâncias criadas antes das chaves por instância
+			inst.token = newInstanceToken()
+			_, _ = m.db.ExecContext(ctx, `UPDATE api_instances SET token = $1 WHERE name = $2`, inst.token, r.name)
+		}
 		var device *store.Device
 		if r.jid != "" {
 			if jid, err := types.ParseJID(r.jid); err == nil {
@@ -157,12 +168,13 @@ func (m *Manager) Create(ctx context.Context, name, webhook string) (*Instance, 
 	if _, ok := m.instances[name]; ok {
 		return nil, ErrExists
 	}
+	token := newInstanceToken()
 	if _, err := m.db.ExecContext(ctx,
-		`INSERT INTO api_instances (name, jid, webhook, created_at) VALUES ($1, '', $2, $3)`,
-		name, webhook, time.Now().Unix()); err != nil {
+		`INSERT INTO api_instances (name, jid, webhook, token, created_at) VALUES ($1, '', $2, $3, $4)`,
+		name, webhook, token, time.Now().Unix()); err != nil {
 		return nil, err
 	}
-	inst := &Instance{Name: name, mgr: m, webhook: webhook}
+	inst := &Instance{Name: name, mgr: m, webhook: webhook, token: token}
 	inst.setClient(m.container.NewDevice())
 	m.instances[name] = inst
 	return inst, nil
@@ -176,6 +188,27 @@ func (m *Manager) Get(name string) (*Instance, error) {
 		return nil, ErrNotFound
 	}
 	return inst, nil
+}
+
+// ByToken acha a instância dona de uma chave.
+func (m *Manager) ByToken(tok string) *Instance {
+	if tok == "" {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.instances {
+		if subtle.ConstantTimeCompare([]byte(inst.Token()), []byte(tok)) == 1 {
+			return inst
+		}
+	}
+	return nil
+}
+
+func newInstanceToken() string {
+	b := make([]byte, 20)
+	_, _ = rand.Read(b)
+	return "inst_" + hex.EncodeToString(b)
 }
 
 // Fallback devolve a instância padrão para nomes desconhecidos:
@@ -247,6 +280,24 @@ func (i *Instance) Client() *whatsmeow.Client {
 	return i.client
 }
 
+func (i *Instance) Token() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.token
+}
+
+// RotateToken gera uma chave nova; a antiga para de funcionar na hora.
+func (i *Instance) RotateToken(ctx context.Context) (string, error) {
+	tok := newInstanceToken()
+	if _, err := i.mgr.db.ExecContext(ctx, `UPDATE api_instances SET token = $1 WHERE name = $2`, tok, i.Name); err != nil {
+		return "", err
+	}
+	i.mu.Lock()
+	i.token = tok
+	i.mu.Unlock()
+	return tok, nil
+}
+
 func (i *Instance) Webhook() string {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
@@ -297,6 +348,7 @@ func (i *Instance) Status() InstanceStatus {
 		LoggedIn:  cli.IsLoggedIn(),
 		Connected: cli.IsConnected(),
 		Webhook:   i.webhook,
+		Token:     i.token,
 		LastError: i.lastErr,
 		PushName:  cli.Store.PushName,
 	}
