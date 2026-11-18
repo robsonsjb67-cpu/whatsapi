@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatsAPI</title>
+<style>
+  :root { --bg:#f5f6f7; --card:#fff; --text:#1b1f23; --muted:#667; --line:#e2e5e8; --accent:#128c7e; --danger:#c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111417; --card:#1b2025; --text:#e8eaed; --muted:#9aa3ab; --line:#2c333a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:880px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:22px; margin:0 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input, textarea { flex:1; min-width:160px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+  button { padding:8px 14px; border:0; border-radius:6px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button.sec { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button.danger { background:var(--danger); }
+  .inst { display:grid; grid-template-columns:1fr auto; gap:12px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; background:var(--line); }
+  .badge.connected { background:#1e8e3e; color:#fff; } .badge.qr { background:#f0a500; color:#000; }
+  .muted { color:var(--muted); font-size:13px; }
+  img.qr { width:260px; height:260px; background:#fff; padding:8px; border-radius:8px; }
+  #msg { min-height:20px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  .bar { height:10px; background:var(--line); border-radius:99px; overflow:hidden; margin:8px 0; }
+  .bar > div { height:100%; background:var(--accent); width:0; transition:width .3s; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+  td, th { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); }
+  .ok { color:#1e8e3e; } .fail { color:var(--danger); }
+  .warn { background:#fff4d6; color:#5c4400; border-radius:6px; padding:8px 10px; font-size:13px; margin-top:8px; }
+  @media (prefers-color-scheme: dark) { .warn { background:#3a3016; color:#f3dfa2; } }
+  .tablewrap { max-height:320px; overflow:auto; }
+  @media (max-width:600px) { .inst { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>WhatsAPI</h1>
+  <div class="card">
+    <div class="row">
+      <input id="token" type="password" placeholder="Token da API (está no arquivo .env)">
+      <button onclick="saveToken()">Entrar</button>
+    </div>
+    <div id="msg" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <strong>Nova instância</strong>
+    <div class="row" style="margin-top:8px">
+      <input id="newName" placeholder="nome (ex: principal)">
+      <input id="newHook" placeholder="URL do webhook (opcional)">
+      <button onclick="createInst()">Criar</button>
+    </div>
+  </div>
+
+  <div id="list"></div>
+
+  <div class="card">
+    <strong>Disparo automático</strong>
+    <label for="cInst">Instância</label>
+    <select id="cInst" onchange="loadCampaign()" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit"></select>
+    <div id="cForm">
+      <label for="cNums">Números, um por linha, com DDI. Para usar o nome: <code>5511999999999;João</code></label>
+      <textarea id="cNums" rows="6" style="width:100%" placeholder="5511999999999;João&#10;5521988887777;Maria&#10;5531977776666"></textarea>
+      <label for="cText">Mensagem (use <code>{nome}</code> para colocar o nome da pessoa)</label>
+      <textarea id="cText" rows="4" style="width:100%" placeholder="Oi {nome}, tudo bem?"></textarea>
+      <div class="row">
+        <div style="flex:1"><label for="cDelay">Intervalo entre mensagens (segundos)</label><input id="cDelay" type="number" min="5" value="60" style="width:100%"></div>
+        <div style="flex:1"><label for="cJitter">Variação aleatória (± segundos)</label><input id="cJitter" type="number" min="0" value="15" style="width:100%"></div>
+      </div>
+      <div class="warn">Disparar para muita gente que não tem seu número salvo é a principal causa de banimento. Mantenha o intervalo alto e a variação ligada.</div>
+      <div class="row" style="margin-top:10px"><button onclick="startCampaign()">Iniciar disparo</button><span id="cCount" class="muted"></span></div>
+    </div>
+    <div id="cStatus" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <strong>Enviar mensagem de teste</strong>
+    <div class="row" style="margin-top:8px">
+      <input id="sendInst" placeholder="instância">
+      <input id="sendTo" placeholder="número com DDI (5511999999999)">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <textarea id="sendText" rows="2" placeholder="mensagem"></textarea>
+      <button onclick="sendText()">Enviar</button>
+    </div>
+  </div>
+</main>
+<script>
+let token = '';
+try { token = localStorage.getItem('whatsapi_token') || ''; } catch (e) {}
+document.getElementById('token').value = token;
+const msg = t => document.getElementById('msg').textContent = t;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: { token, 'Content-Type':'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+// ---------- disparo ----------
+const statusPt = { running:'Enviando', waiting_connection:'Aguardando o número reconectar', finished:'Concluído', stopped:'Parado', none:'' };
+let lastNames = '';
+function fillInstances(list) {
+  const names = list.map(i => i.name).join('|');
+  if (names === lastNames) return;
+  lastNames = names;
+  const sel = document.getElementById('cInst'), cur = sel.value;
+  sel.innerHTML = list.map(i => `<option value="${esc(i.name)}">${esc(i.name)}</option>`).join('');
+  if (cur && list.some(i => i.name === cur)) sel.value = cur;
+  loadCampaign();
+}
+document.getElementById('cNums').addEventListener('input', () => {
+  const n = new Set(document.getElementById('cNums').value.split('\n').map(l => l.split(/[;,\t]/)[0].replace(/\D/g, '')).filter(d => d.length >= 8)).size;
+  const d = +document.getElementById('cDelay').value || 60;
+  document.getElementById('cCount').textContent = n ? `${n} número(s), cerca de ${fmtDur(n > 1 ? (n - 1) * d : 0)} no total` : '';
+});
+function fmtDur(s) { s = Math.max(0, Math.round(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; return h ? `${h}h ${m}min` : m ? `${m}min ${x}s` : `${x}s`; }
+async function startCampaign() {
+  const name = document.getElementById('cInst').value;
+  if (!name) { msg('Crie uma instância primeiro.'); return; }
+  try {
+    await api('POST', `/instances/${name}/campaign`, {
+      numbers: [document.getElementById('cNums').value],
+      text: document.getElementById('cText').value,
+      delaySeconds: +document.getElementById('cDelay').value || 60,
+      jitterSeconds: +document.getElementById('cJitter').value || 0,
+    });
+    msg('Disparo iniciado.');
+    loadCampaign();
+  } catch (e) { msg(e.message); }
+}
+async function stopCampaign() {
+  try { await api('DELETE', `/instances/${document.getElementById('cInst').value}/campaign`); loadCampaign(); } catch (e) { msg(e.message); }
+}
+async function loadCampaign() {
+  const name = document.getElementById('cInst').value, box = document.getElementById('cStatus');
+  if (!name || !token) { box.innerHTML = ''; return; }
+  let c; try { c = await api('GET', `/instances/${name}/campaign`); } catch (e) { return; }
+  const active = c.status === 'running' || c.status === 'waiting_connection';
+  document.getElementById('cForm').style.display = active ? 'none' : '';
+  if (c.status === 'none') { box.innerHTML = ''; return; }
+  const done = c.sent + c.failed, pct = c.total ? Math.round(done / c.total * 100) : 0;
+  const next = active && c.nextAt ? Math.max(0, c.nextAt - Math.floor(Date.now() / 1000)) : null;
+  const rows = c.items.filter(t => t.status !== 'pending').reverse().map(t => `<tr><td>${esc(t.phone)}</td><td>${esc(t.name)}</td>
+    <td class="${t.status === 'sent' ? 'ok' : 'fail'}">${t.status === 'sent' ? 'enviada' : 'falhou: ' + esc(t.error)}</td>
+    <td>${t.at ? new Date(t.at * 1000).toLocaleTimeString('pt-BR') : ''}</td></tr>`).join('');
+  box.innerHTML = `
+    <div><strong>${statusPt[c.status] || esc(c.status)}</strong> · ${c.sent} enviadas · ${c.failed} falharam · ${c.total} no total</div>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="muted">${next !== null && done < c.total ? 'Próxima mensagem em ' + fmtDur(next) : ''}</div>
+    <div class="row" style="margin-top:8px">${active ? '<button class="danger" onclick="stopCampaign()">Parar disparo</button>' : ''}</div>
+    ${rows ? `<div class="tablewrap"><table><tr><th>Número</th><th>Nome</th><th>Resultado</th><th>Hora</th></tr>${rows}</table></div>` : ''}`;
+}
+setInterval(loadCampaign, 2000);
+
+// Aceita colar a linha inteira do console ("... Token da API: abc123") ou "API_TOKEN=abc123".
+function cleanToken(t) { return (t || '').trim().split(/[\s=]+/).pop() || ''; }
+function saveToken() {
+  token = cleanToken(document.getElementById('token').value);
+  document.getElementById('token').value = token;
+  try { localStorage.setItem('whatsapi_token', token); } catch (e) {}
+  refresh();
+}
+async function createInst() {
+  try {
+    const name = document.getElementById('newName').value.trim();
+    await api('POST', '/instances', { name, webhook: document.getElementById('newHook').value.trim() });
+    msg('Instância criada. Gerando QR Code...');
+    await api('POST', '/instances/' + name + '/connect');
+    msg('Escaneie o QR abaixo.');
+    refresh();
+  } catch (e) { msg(e.message); }
+}
+async function act(name, what) {
+  try {
+    if (what === 'connect') await api('POST', `/instances/${name}/connect`);
+    if (what === 'logout') await api('POST', `/instances/${name}/logout`);
+    if (what === 'delete') { if (!confirm('Apagar a instância ' + name + '?')) return; await api('DELETE', `/instances/${name}`); }
+    if (what === 'webhook') {
+      const url = prompt('URL do webhook (vazio desliga):', '');
+      if (url === null) return;
+      await api('PUT', `/instances/${name}/webhook`, { url });
+    }
+    refresh();
+  } catch (e) { msg(e.message); }
+}
+async function sendText() {
+  try {
+    const r = await api('POST', `/instances/${document.getElementById('sendInst').value.trim()}/send/text`,
+      { to: document.getElementById('sendTo').value, text: document.getElementById('sendText').value });
+    msg('Enviado! id ' + r.id);
+  } catch (e) { msg(e.message); }
+}
+async function autoLogin() {
+  try {
+    const r = await fetch('/panel/token', { cache: 'no-store' });
+    if (!r.ok) return false;
+    const j = await r.json();
+    if (!j.token) return false;
+    token = j.token;
+    document.getElementById('token').value = token;
+    try { localStorage.setItem('whatsapi_token', token); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+async function refresh() {
+  if (!token) { msg('Cole o token para começar (ele aparece na janela preta como "Token da API").'); return; }
+  let list;
+  try { list = await api('GET', '/instances'); msg(''); }
+  catch (e) {
+    if (/token/i.test(e.message) && await autoLogin()) return refresh();
+    msg(/token/i.test(e.message) ? 'Token inválido. Copie o valor depois de "Token da API:" na janela preta, ou a linha API_TOKEN do arquivo .env.' : e.message);
+    return;
+  }
+  const el = document.getElementById('list');
+  fillInstances(list);
+  if (!list.length) { el.innerHTML = '<div class="card muted">Nenhuma instância ainda.</div>'; return; }
+  el.innerHTML = list.map(i => `
+    <div class="card inst">
+      <div>
+        <strong>${esc(i.name)}</strong> <span class="badge ${esc(i.status)}">${esc(i.status)}</span>
+        <div class="muted">${i.phone ? 'Número: ' + esc(i.phone) + (i.pushName ? ' (' + esc(i.pushName) + ')' : '') : 'Sem número conectado'}</div>
+        <div class="muted">Webhook: ${esc(i.webhook) || 'nenhum'}</div>
+        ${i.lastError ? `<div class="muted" style="color:var(--danger)">${esc(i.lastError)}</div>` : ''}
+        <div class="row" style="margin-top:10px">
+          ${i.loggedIn ? `<button class="sec" onclick="act('${esc(i.name)}','logout')">Desconectar número</button>`
+                       : `<button onclick="act('${esc(i.name)}','connect')">Conectar / novo QR</button>`}
+          <button class="sec" onclick="act('${esc(i.name)}','webhook')">Webhook</button>
+          <button class="danger" onclick="act('${esc(i.name)}','delete')">Apagar</button>
+        </div>
+      </div>
+      <div>${i.status === 'connecting' ? '<div class="muted">Gerando QR Code...</div>' : ''}${i.status === 'qr' ? `<img class="qr" alt="QR Code" src="/instances/${esc(i.name)}/qr?format=png&token=${encodeURIComponent(token)}&t=${Date.now()}">
+        <div class="muted">WhatsApp &gt; Aparelhos conectados &gt; Conectar aparelho</div>` : ''}</div>
+    </div>`).join('');
+}
+(async () => { if (!token) await autoLogin(); refresh(); setInterval(refresh, 4000); })();
+</script>
+</body>
+</html>

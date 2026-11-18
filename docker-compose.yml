@@ -1,0 +1,24 @@
+services:
+  whatsapi:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file: .env
+    volumes:
+      - ./data:/app/data   # sessões do WhatsApp (SQLite). Não apague!
+
+  # Para usar Postgres em vez de SQLite, descomente abaixo e ajuste o .env:
+  #   DB_DIALECT=postgres
+  #   DB_URL=postgres://whatsapi:whatsapi@postgres:5432/whatsapi?sslmode=disable
+  # postgres:
+  #   image: postgres:17-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: whatsapi
+  #     POSTGRES_PASSWORD: whatsapi
+  #     POSTGRES_DB: whatsapi
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+# volumes:
+#   pgdata:
