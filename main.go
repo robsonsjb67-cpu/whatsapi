@@ -36,13 +36,14 @@ func main() {
 	loadDotEnv(".env")
 	ensureToken(".env")
 	cfg := Config{
-		Port:          env("PORT", "8080"),
-		APIToken:      env("API_TOKEN", ""),
-		DBDialect:     env("DB_DIALECT", "sqlite"),
-		DBURL:         env("DB_URL", "file:data/whatsapi.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"),
-		WebhookSecret: env("WEBHOOK_SECRET", ""),
-		MediaBase64:   env("WEBHOOK_MEDIA_BASE64", "false") == "true",
-		LogLevel:      env("LOG_LEVEL", "INFO"),
+		Port:             env("PORT", "8080"),
+		APIToken:         env("API_TOKEN", ""),
+		DBDialect:        env("DB_DIALECT", "sqlite"),
+		DBURL:            env("DB_URL", "file:data/whatsapi.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"),
+		WebhookSecret:    env("WEBHOOK_SECRET", ""),
+		MediaBase64:      env("WEBHOOK_MEDIA_BASE64", "false") == "true",
+		LogLevel:         env("LOG_LEVEL", "INFO"),
+		FallbackInstance: env("FALLBACK_INSTANCE", ""),
 	}
 	if cfg.APIToken == "" {
 		log.Println("defina a variável de ambiente API_TOKEN")
@@ -100,6 +101,8 @@ type Config struct {
 	WebhookSecret string
 	MediaBase64   bool
 	LogLevel      string
+	// Instância usada quando o sistema pede um nome que não existe.
+	FallbackInstance string
 }
 
 // loadDotEnv lê um arquivo .env simples (CHAVE=valor) sem sobrescrever variáveis já definidas.

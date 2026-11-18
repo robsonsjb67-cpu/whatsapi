@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/base64"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -40,13 +41,34 @@ func evoErr(w http.ResponseWriter, code int, msgs ...any) {
 
 func (a *API) evoInstance(next instHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		inst, err := a.mgr.Get(r.PathValue("name"))
+		name := r.PathValue("name")
+		inst, err := a.mgr.Get(name)
 		if err != nil {
-			evoErr(w, http.StatusNotFound, `The "`+r.PathValue("name")+`" instance does not exist`)
-			return
+			// Nome desconhecido (ex.: instância antiga da WaDuck salva no site):
+			// usa FALLBACK_INSTANCE ou, se só houver uma instância conectada, ela.
+			if fb := a.mgr.Fallback(); fb != nil {
+				log.Printf("[evolution] %s %s: instância %q não existe, usando %q", r.Method, r.URL.Path, name, fb.Name)
+				inst = fb
+			} else {
+				log.Printf("[evolution] %s %s: instância %q não existe", r.Method, r.URL.Path, name)
+				evoErr(w, http.StatusNotFound, `The "`+name+`" instance does not exist`)
+				return
+			}
 		}
-		next(w, r, inst)
+		rec := &statusRecorder{ResponseWriter: w, code: 200}
+		next(rec, r, inst)
+		log.Printf("[evolution] %s %s -> instância %q, resposta %d", r.Method, r.URL.Path, inst.Name, rec.code)
 	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+func (s *statusRecorder) WriteHeader(c int) {
+	s.code = c
+	s.ResponseWriter.WriteHeader(c)
 }
 
 // evoState traduz nosso status para o da Evolution: open | connecting | close.
@@ -89,6 +111,7 @@ func (a *API) evoSendText(w http.ResponseWriter, r *http.Request, inst *Instance
 	}
 	jid, err := resolveJID(r.Context(), cli, body.Number)
 	if err != nil {
+		log.Printf("[evolution] número %s: %v", body.Number, err)
 		evoErr(w, 400, map[string]any{"exists": false, "number": body.Number, "error": err.Error()})
 		return
 	}

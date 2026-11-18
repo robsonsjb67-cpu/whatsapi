@@ -178,6 +178,28 @@ func (m *Manager) Get(name string) (*Instance, error) {
 	return inst, nil
 }
 
+// Fallback devolve a instância padrão para nomes desconhecidos:
+// FALLBACK_INSTANCE (se existir) ou a única instância conectada.
+func (m *Manager) Fallback() *Instance {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if name := m.cfg.FallbackInstance; name != "" {
+		if inst, ok := m.instances[name]; ok {
+			return inst
+		}
+	}
+	var only *Instance
+	for _, inst := range m.instances {
+		if inst.Client().IsLoggedIn() {
+			if only != nil {
+				return nil // mais de uma conectada: não dá pra adivinhar
+			}
+			only = inst
+		}
+	}
+	return only
+}
+
 func (m *Manager) List() []InstanceStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
