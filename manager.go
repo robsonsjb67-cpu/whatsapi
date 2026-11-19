@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -79,7 +80,9 @@ func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("banco de dados: %w", err)
 	}
-	store.DeviceProps.Os = proto.String("WhatsAPI")
+	// Nome que aparece em "Aparelhos conectados" no celular.
+	store.DeviceProps.Os = proto.String(cfg.DeviceName)
+	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
 
 	logger := waLog.Stdout("whatsmeow", cfg.LogLevel, true)
 	container := sqlstore.NewWithDB(db, cfg.DBDialect, logger.Sub("DB"))
@@ -460,7 +463,7 @@ func (i *Instance) PairCode(ctx context.Context, phone string) (string, error) {
 		// Espera o primeiro QR para garantir que o websocket está pronto.
 		i.QR(15 * time.Second)
 	}
-	return cli.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	return cli.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome ("+i.mgr.cfg.DeviceName+")")
 }
 
 func (i *Instance) Logout(ctx context.Context) error {

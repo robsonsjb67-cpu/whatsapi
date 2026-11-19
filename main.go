@@ -44,6 +44,7 @@ func main() {
 		MediaBase64:      env("WEBHOOK_MEDIA_BASE64", "false") == "true",
 		LogLevel:         env("LOG_LEVEL", "INFO"),
 		FallbackInstance: env("FALLBACK_INSTANCE", ""),
+		DeviceName:       env("DEVICE_NAME", "Agendamento"),
 	}
 	if cfg.APIToken == "" {
 		log.Println("defina a variável de ambiente API_TOKEN")
@@ -103,6 +104,8 @@ type Config struct {
 	LogLevel      string
 	// Instância usada quando o sistema pede um nome que não existe.
 	FallbackInstance string
+	// Nome do aparelho em "Aparelhos conectados" no WhatsApp do celular.
+	DeviceName string
 }
 
 // loadDotEnv lê um arquivo .env simples (CHAVE=valor) sem sobrescrever variáveis já definidas.
